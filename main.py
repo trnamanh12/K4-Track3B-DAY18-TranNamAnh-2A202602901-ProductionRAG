@@ -56,14 +56,18 @@ def main():
         with open(prod_path, encoding="utf-8") as f:
             prod = json.load(f)
 
-        print(f"\n{'Metric':<25} {'Basic':>8} {'Production':>12} {'Δ':>8}")
-        print("-" * 55)
-        for m in ["faithfulness", "answer_relevancy", "context_precision", "context_recall"]:
-            n = naive.get("aggregate", {}).get(m, 0)
-            p = prod.get("aggregate", {}).get(m, 0)
-            d = p - n
-            status = "✓" if p >= 0.75 else " "
-            print(f"{status} {m:<23} {n:>8.4f} {p:>12.4f} {d:>+8.4f}")
+        if naive.get("aggregate", {}).get("evaluation_status") != "completed" or \
+                prod.get("aggregate", {}).get("evaluation_status") != "completed":
+            print("RAGAS comparison unavailable; check report evaluation_error fields.")
+        else:
+            print(f"\n{'Metric':<25} {'Basic':>8} {'Production':>12} {'Δ':>8}")
+            print("-" * 55)
+            for m in ["faithfulness", "answer_relevancy", "context_precision", "context_recall"]:
+                n = naive.get("aggregate", {}).get(m, 0)
+                p = prod.get("aggregate", {}).get(m, 0)
+                d = p - n
+                status = "✓" if p >= 0.75 else " "
+                print(f"{status} {m:<23} {n:>8.4f} {p:>12.4f} {d:>+8.4f}")
 
     elapsed = time.time() - start
     print(f"\n⏱️  Total time: {elapsed:.1f}s")

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Module 4: RAGAS Evaluation — 4 metrics + failure analysis."""
 
-import os, sys, json
+import os, sys, json, math
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 if hasattr(sys.stderr, "reconfigure"):
@@ -10,7 +10,15 @@ if hasattr(sys.stderr, "reconfigure"):
 from dataclasses import dataclass
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import TEST_SET_PATH
+from config import GEMINI_API_KEY, GEMINI_EMBEDDING_MODEL, GEMINI_MODEL, TEST_SET_PATH
+
+
+def _finite_score(value) -> float:
+    try:
+        score = float(value)
+        return score if math.isfinite(score) else 0.0
+    except (TypeError, ValueError):
+        return 0.0
 
 
 @dataclass
@@ -36,24 +44,34 @@ def evaluate_ragas(questions: list[str], answers: list[str],
     """Run RAGAS evaluation."""
     metric_names = ("faithfulness", "answer_relevancy", "context_precision", "context_recall")
     try:
+        if not GEMINI_API_KEY:
+            raise ValueError("Set GEMINI_API_KEY in .env to enable RAGAS evaluation")
         from datasets import Dataset
         from ragas import evaluate
         from ragas.metrics import faithfulness, answer_relevancy, context_precision, context_recall
+        from langchain_google_genai import GoogleGenerativeAIEmbeddings
+        from src.llm import gemini_chat_model
 
         dataset = Dataset.from_dict({
             "question": questions, "answer": answers,
             "contexts": contexts, "ground_truth": ground_truths,
         })
         result = evaluate(dataset, metrics=[faithfulness, answer_relevancy,
-                                            context_precision, context_recall])
+                                            context_precision, context_recall],
+                          llm=gemini_chat_model(temperature=0),
+                          embeddings=GoogleGenerativeAIEmbeddings(
+                              model=GEMINI_EMBEDDING_MODEL, google_api_key=GEMINI_API_KEY),
+                          max_workers=2)
         rows = result.to_pandas().to_dict(orient="records")
         per_question = [EvalResult(
             question=row["question"], answer=row["answer"], contexts=row["contexts"],
             ground_truth=row["ground_truth"],
-            **{name: float(row.get(name, 0.0) or 0.0) for name in metric_names},
+            **{name: _finite_score(row.get(name, 0.0)) for name in metric_names},
         ) for row in rows]
-        aggregate = {name: float(result[name]) for name in metric_names}
-        return {**aggregate, "evaluation_status": "completed", "per_question": per_question}
+        aggregate = {name: _finite_score(result[name]) for name in metric_names}
+        return {**aggregate, "evaluation_status": "completed",
+                "evaluation_model": GEMINI_MODEL, "embedding_model": GEMINI_EMBEDDING_MODEL,
+                "per_question": per_question}
     except Exception as exc:
         print(f"  ⚠️  RAGAS evaluation failed: {exc}")
         per_question = [EvalResult(q, a, c, gt, 0.0, 0.0, 0.0, 0.0)

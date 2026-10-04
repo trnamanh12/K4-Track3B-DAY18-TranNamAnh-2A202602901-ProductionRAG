@@ -5,7 +5,7 @@
     "context_precision": 0.0,
     "context_recall": 0.0,
     "evaluation_status": "unavailable",
-    "evaluation_error": "No module named 'datasets'"
+    "evaluation_error": "Set GEMINI_API_KEY in .env to enable RAGAS evaluation"
   },
   "num_questions": 20,
   "failures": []

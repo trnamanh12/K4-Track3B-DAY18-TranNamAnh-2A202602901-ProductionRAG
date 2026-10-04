@@ -3,6 +3,7 @@ from __future__ import annotations
 """Module 2: Hybrid Search — BM25 (Vietnamese) + Dense + RRF."""
 
 import os, sys
+import re
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 if hasattr(sys.stderr, "reconfigure"):
@@ -50,6 +51,20 @@ class BM25Search:
             return []
         tokens = segment_vietnamese(query).lower().split()
         scores = self.bm25.get_scores(tokens)
+        if not re.search(r"\b(202[0-9]|v[0-9]+|cũ|cu|phiên bản trước)\b", query.lower()):
+            versions = {}
+            for i, document in enumerate(self.documents):
+                source = document.get("metadata", {}).get("source", "")
+                match = re.match(r"(.+)_v(\d+)(?:\.md)?$", source)
+                if match:
+                    family, version = match.group(1), int(match.group(2))
+                    versions[family] = max(versions.get(family, version), version)
+            highest = max((float(score) for score in scores if score > 0), default=0.0)
+            for i, document in enumerate(self.documents):
+                source = document.get("metadata", {}).get("source", "")
+                match = re.match(r"(.+)_v(\d+)(?:\.md)?$", source)
+                if match and int(match.group(2)) == versions[match.group(1)] and scores[i] > 0:
+                    scores[i] += highest * 0.35
         indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
         return [SearchResult(self.documents[i]["text"], float(scores[i]),
                              self.documents[i].get("metadata", {}), "bm25")
@@ -69,6 +84,7 @@ class DenseSearch:
             except ImportError:
                 self.client = None
         self._encoder = None
+        self._indexed = False
 
     def _get_encoder(self):
         if self._encoder is None:
@@ -91,12 +107,13 @@ class DenseSearch:
                                   payload={**chunk.get("metadata", {}), "text": chunk["text"]})
                       for i, (chunk, vector) in enumerate(zip(chunks, vectors))]
             self.client.upsert(collection_name=collection, points=points)
+            self._indexed = True
         except Exception as exc:
             print(f"  ⚠️  Dense indexing unavailable: {exc}")
 
     def search(self, query: str, top_k: int = DENSE_TOP_K, collection: str = COLLECTION_NAME) -> list[SearchResult]:
         """Search using dense vectors."""
-        if self.client is None:
+        if self.client is None or not self._indexed:
             return []
         try:
             query_vector = self._get_encoder().encode(query).tolist()

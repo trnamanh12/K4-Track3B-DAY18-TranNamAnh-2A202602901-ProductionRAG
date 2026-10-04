@@ -1,0 +1,21 @@
+{
+  "chunking_seconds": 0.03201436996459961,
+  "enrichment_seconds": 0.001850128173828125,
+  "indexing_seconds": 0.5215327739715576,
+  "reranker_setup_seconds": 5.0067901611328125e-06,
+  "query_total_seconds": 0.04593467712402344,
+  "query_avg_seconds": 0.002296733856201172,
+  "reragas_evaluation_seconds": 1.8835067749023438e-05,
+  "questions": 20,
+  "dense_enabled": false,
+  "reranker_mode": "lexical_fallback",
+  "generation_mode": "local_fallback",
+  "evaluation_status": "unavailable",
+  "retrieval_total_seconds": 0.017160092995254672,
+  "retrieval_avg_seconds": 0.0008580046497627336,
+  "reranking_total_seconds": 0.02842176200101676,
+  "reranking_avg_seconds": 0.0014210881000508379,
+  "answer_generation_total_seconds": 5.3670082706958055e-06,
+  "answer_generation_avg_seconds": 2.683504135347903e-07,
+  "pipeline_total_seconds": 0.601355791091919
+}

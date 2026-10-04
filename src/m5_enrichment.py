@@ -18,7 +18,30 @@ if hasattr(sys.stderr, "reconfigure"):
 from dataclasses import dataclass, field
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import OPENAI_API_KEY
+from config import GEMINI_API_KEY
+from src.llm import gemini_chat_model
+
+
+def _response_text(response) -> str:
+    content = response.content
+    return content if isinstance(content, str) else "".join(
+        part.get("text", "") for part in content if isinstance(part, dict)
+    )
+
+
+def _fallback_enrichment(text: str, source: str) -> dict:
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", text) if s.strip()]
+    questions = [f"{s.rstrip('.')}?" for s in re.split(r"[.!?\n]", text) if len(s.strip()) > 10][:3]
+    lower = text.lower()
+    category = ("it" if any(word in lower for word in ("mật khẩu", "vpn", "cntt")) else
+                "finance" if any(word in lower for word in ("lương", "chi phí", "vnđ")) else "hr")
+    return {
+        "summary": " ".join(sentences[:2]) or text,
+        "questions": questions,
+        "context": f"Trích từ {source}." if source else "",
+        "metadata": {"topic": text.splitlines()[0][:100] if text else "general",
+                     "entities": [], "category": category, "language": "vi"},
+    }
 
 
 @dataclass
@@ -40,17 +63,14 @@ def summarize_chunk(text: str) -> str:
     Tạo summary ngắn cho chunk.
     Embed summary thay vì (hoặc cùng với) raw chunk → giảm noise.
     """
-    if OPENAI_API_KEY:
+    if GEMINI_API_KEY:
         try:
-            from openai import OpenAI
-            response = OpenAI().chat.completions.create(
-                model="gpt-4o-mini", max_tokens=150,
-                messages=[{"role": "system", "content": "Tóm tắt đoạn văn sau trong 2-3 câu ngắn gọn bằng tiếng Việt."},
-                          {"role": "user", "content": text}],
-            )
-            return response.choices[0].message.content.strip()
+            return _response_text(gemini_chat_model().invoke([
+                ("system", "Tóm tắt đoạn văn sau trong 2-3 câu ngắn gọn bằng tiếng Việt."),
+                ("human", text),
+            ])).strip()
         except Exception as exc:
-            print(f"  ⚠️  OpenAI summarize failed: {exc}")
+            print(f"  ⚠️  Gemini summarize failed: {exc}")
     sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", text) if s.strip()]
     return " ".join(sentences[:2]) or text
 
@@ -63,18 +83,16 @@ def generate_hypothesis_questions(text: str, n_questions: int = 3) -> list[str]:
     Generate câu hỏi mà chunk có thể trả lời.
     Index cả questions lẫn chunk → query match tốt hơn (bridge vocabulary gap).
     """
-    if OPENAI_API_KEY:
+    if GEMINI_API_KEY:
         try:
-            from openai import OpenAI
-            response = OpenAI().chat.completions.create(
-                model="gpt-4o-mini", max_tokens=200,
-                messages=[{"role": "system", "content": f"Dựa trên đoạn văn, tạo {n_questions} câu hỏi mà đoạn văn có thể trả lời. Trả về mỗi câu hỏi trên 1 dòng."},
-                          {"role": "user", "content": text}],
-            )
-            return [q.strip().lstrip("0123456789.-) ") for q in response.choices[0].message.content.splitlines()
+            response = gemini_chat_model().invoke([
+                ("system", f"Dựa trên đoạn văn, tạo {n_questions} câu hỏi mà đoạn văn có thể trả lời. Trả về mỗi câu hỏi trên 1 dòng."),
+                ("human", text),
+            ])
+            return [q.strip().lstrip("0123456789.-) ") for q in _response_text(response).splitlines()
                     if q.strip()][:n_questions]
         except Exception as exc:
-            print(f"  ⚠️  OpenAI HyQA failed: {exc}")
+            print(f"  ⚠️  Gemini HyQA failed: {exc}")
     sentences = [s.strip() for s in re.split(r"[.!?\n]", text) if len(s.strip()) > 10]
     return [f"{sentence.rstrip('.')}?" for sentence in sentences[:max(0, n_questions)]]
 
@@ -87,17 +105,15 @@ def contextual_prepend(text: str, document_title: str = "") -> str:
     Prepend context giải thích chunk nằm ở đâu trong document.
     Anthropic benchmark: giảm 49% retrieval failure (alone).
     """
-    if OPENAI_API_KEY:
+    if GEMINI_API_KEY:
         try:
-            from openai import OpenAI
-            response = OpenAI().chat.completions.create(
-                model="gpt-4o-mini", max_tokens=80,
-                messages=[{"role": "system", "content": "Viết 1 câu ngắn mô tả đoạn văn này nằm ở đâu trong tài liệu và nói về chủ đề gì. Chỉ trả về 1 câu."},
-                          {"role": "user", "content": f"Tài liệu: {document_title}\n\nĐoạn văn:\n{text}"}],
-            )
-            return f"{response.choices[0].message.content.strip()}\n\n{text}"
+            response = gemini_chat_model().invoke([
+                ("system", "Viết 1 câu ngắn mô tả đoạn văn này nằm ở đâu trong tài liệu và nói về chủ đề gì. Chỉ trả về 1 câu."),
+                ("human", f"Tài liệu: {document_title}\n\nĐoạn văn:\n{text}"),
+            ])
+            return f"{_response_text(response).strip()}\n\n{text}"
         except Exception as exc:
-            print(f"  ⚠️  OpenAI contextual failed: {exc}")
+            print(f"  ⚠️  Gemini contextual failed: {exc}")
     prefix = f"Trích từ {document_title}. " if document_title else ""
     return f"{prefix}{text}"
 
@@ -109,17 +125,15 @@ def extract_metadata(text: str) -> dict:
     """
     LLM extract metadata tự động: topic, entities, date_range, category.
     """
-    if OPENAI_API_KEY:
+    if GEMINI_API_KEY:
         try:
-            from openai import OpenAI
-            response = OpenAI().chat.completions.create(
-                model="gpt-4o-mini", max_tokens=150,
-                messages=[{"role": "system", "content": 'Trích xuất metadata từ đoạn văn. Trả về JSON: {"topic": "...", "entities": ["..."], "category": "policy|hr|it|finance", "language": "vi|en"}'},
-                          {"role": "user", "content": text}],
-            )
-            return json.loads(response.choices[0].message.content)
+            response = gemini_chat_model().invoke([
+                ("system", 'Trích xuất metadata từ đoạn văn. Trả về JSON: {"topic": "...", "entities": ["..."], "category": "policy|hr|it|finance", "language": "vi|en"}'),
+                ("human", text),
+            ])
+            return json.loads(_response_text(response))
         except Exception as exc:
-            print(f"  ⚠️  OpenAI metadata failed: {exc}")
+            print(f"  ⚠️  Gemini metadata failed: {exc}")
     lower = text.lower()
     category = ("it" if any(word in lower for word in ("mật khẩu", "vpn", "cntt")) else
                 "finance" if any(word in lower for word in ("lương", "chi phí", "vnđ")) else "hr")
@@ -135,22 +149,18 @@ def _enrich_single_call(text: str, source: str) -> dict:
 
     ⚠️ Cost optimization: 1 API call thay vì 4 calls riêng lẻ.
     """
-    if OPENAI_API_KEY:
+    if GEMINI_API_KEY:
         try:
-            from openai import OpenAI
-            response = OpenAI().chat.completions.create(
-                model="gpt-4o-mini", max_tokens=400,
-                response_format={"type": "json_object"},
-                messages=[{"role": "system", "content": "Phân tích đoạn văn và trả về JSON với các khóa summary, questions, context, metadata (topic, entities, category, language)."},
-                          {"role": "user", "content": f"Tài liệu: {source}\n\nĐoạn văn:\n{text}"}],
-            )
-            return json.loads(response.choices[0].message.content)
+            response = gemini_chat_model().invoke([
+                ("system", 'Phân tích đoạn văn, chỉ trả về JSON hợp lệ với khóa summary, questions, context, metadata (topic, entities, category, language).'),
+                ("human", f"Tài liệu: {source}\n\nĐoạn văn:\n{text}"),
+            ])
+            content = _response_text(response).strip()
+            content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content)
+            return json.loads(content)
         except Exception as exc:
             print(f"  ⚠️  Enrichment API failed: {exc}")
-    summary = summarize_chunk(text)
-    return {"summary": summary, "questions": generate_hypothesis_questions(text),
-            "context": f"Trích từ {source}." if source else "",
-            "metadata": extract_metadata(text)}
+    return _fallback_enrichment(text, source)
 
 
 # ─── Full Enrichment Pipeline ────────────────────────────
@@ -184,11 +194,21 @@ def enrich_chunks(
 
         if use_combined:
             result = _enrich_single_call(text, source)
-            summary = result.get("summary", "")
-            questions = result.get("questions", [])
-            context_line = result.get("context", "")
-            enriched_text = f"{context_line}\n\n{text}" if context_line else text
+            summary = result.get("summary", "") or ""
+            questions = result.get("questions", []) or []
+            if isinstance(questions, str):
+                questions = [questions]
+            questions = [str(question) for question in questions]
+            context_line = result.get("context", "") or ""
+            enriched_text = "\n\n".join(part for part in (
+                context_line,
+                f"Tóm tắt: {summary}" if summary else "",
+                "Câu hỏi liên quan: " + " | ".join(questions) if questions else "",
+                text,
+            ) if part)
             auto_meta = result.get("metadata", {})
+            if not isinstance(auto_meta, dict):
+                auto_meta = {}
         else:
             summary = summarize_chunk(text) if "summary" in methods else ""
             questions = generate_hypothesis_questions(text) if "hyqa" in methods else []

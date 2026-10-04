@@ -96,6 +96,8 @@ def validate():
     else:
         errors += 1
     check_file("reports/naive_baseline_report.json", required=False)
+    check_file("reports/latency_report.json", required=False)
+    check_file("reports/latency_report.md", required=False)
 
     # 3. Analysis
     print("\n📝 Analysis:")

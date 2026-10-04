@@ -38,11 +38,11 @@ def main():
     test_set = load_test_set()
     questions, answers, all_contexts, ground_truths = [], [], [], []
 
-    from config import OPENAI_API_KEY
+    from config import GEMINI_API_KEY
     llm_client = None
-    if OPENAI_API_KEY:
-        from openai import OpenAI
-        llm_client = OpenAI()
+    if GEMINI_API_KEY:
+        from src.llm import gemini_chat_model
+        llm_client = gemini_chat_model(temperature=0)
 
     for i, item in enumerate(test_set):
         results = search.search(item["question"], top_k=3, collection=NAIVE_COLLECTION)
@@ -51,11 +51,10 @@ def main():
         if llm_client and contexts:
             try:
                 context_str = "\n\n".join(contexts)
-                resp = llm_client.chat.completions.create(model="gpt-4o-mini", messages=[
-                    {"role": "system", "content": "Trả lời CHỈ dựa trên context. Nếu không có → nói 'Không tìm thấy.'"},
-                    {"role": "user", "content": f"Context:\n{context_str}\n\nCâu hỏi: {item['question']}"},
-                ])
-                answer = resp.choices[0].message.content
+                answer = llm_client.invoke([
+                    ("system", "Trả lời ngắn gọn bằng tiếng Việt, chỉ dựa trên context. Nếu context không đủ, nêu rõ phần còn thiếu; không suy đoán."),
+                    ("human", f"Context:\n{context_str}\n\nCâu hỏi: {item['question']}"),
+                ]).content
             except Exception:
                 answer = contexts[0]
         else:
@@ -70,11 +69,11 @@ def main():
     results = evaluate_ragas(questions, answers, all_contexts, ground_truths)
     print("\nBASIC BASELINE SCORES")
     for m in ["faithfulness", "answer_relevancy", "context_precision", "context_recall"]:
-        print(f"  {m}: {results.get(m, 0):.4f}")
+        value = f"{results.get(m, 0):.4f}" if not results.get("evaluation_error") else "unavailable"
+        print(f"  {m}: {value}")
     save_report(results, [], path="reports/naive_baseline_report.json")
-    if all(results.get(m, 0) == 0 for m in ["faithfulness", "answer_relevancy", "context_precision", "context_recall"]):
-        print("\n💡 Lưu ý: Điểm baseline hiển thị 0.00 là bình thường khi chưa hoàn thiện M2 (Dense Search) và M4 (Eval).")
-        print("   Sau khi bạn implement xong các module, hãy chạy 'python main.py' để tự động cập nhật baseline thật và so sánh.")
+    if results.get("evaluation_error"):
+        print("\n⚠️  Baseline was not scored; see evaluation_error in its report.")
     print("\nDone! Now implement advanced modules and run: python main.py")
 
 

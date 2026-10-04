@@ -5,7 +5,7 @@
 
 ## Evaluation status
 
-The pipeline processed 20 questions and wrote both reports, but RAGAS did not run: `No module named 'datasets'`. `OPENAI_API_KEY` is also not configured. The report records `evaluation_status: unavailable`; its zero placeholders are **not scores**. The baseline dense index was also unavailable because `qdrant-client` and `sentence_transformers` are not installed. Therefore there is no valid baseline/production comparison or RAGAS bottom-five for this run.
+The pipeline processed all 20 questions. RAGAS did not run because `GEMINI_API_KEY` is not configured; the report records `evaluation_status: unavailable`. The zero placeholders are **not scores**, so there is no valid baseline/production comparison or RAGAS-ranked bottom-five. The local run used BM25 and lexical reranking because bge-m3 and the cross-encoder weights were not cached.
 
 | Metric | Naive baseline | Production | Δ |
 |--------|---------------|------------|---|
@@ -14,62 +14,62 @@ The pipeline processed 20 questions and wrote both reports, but RAGAS did not ru
 | Context Precision | N/A | N/A | N/A |
 | Context Recall | N/A | N/A | N/A |
 
-## Five qualitative retrieval failures
+## Five qualitative retrieval risks
 
-These are manual examples from the local BM25 plus lexical fallback run, not a RAGAS-ranked bottom-five.
+These are manual examples from the local BM25 plus lexical fallback run, not measured RAGAS failures.
 
-### 1. Leave for employee marriage
+### 1. Senior leave and salary (multi-hop)
 
-- **Question:** Nhân viên được nghỉ bao nhiêu ngày khi kết hôn?
-- **Expected:** 3 paid working days, not deducted from annual leave.
-- **Observed:** The first reranked result came from `hoan_chi_dao_tao.md`; a relevant `nghi_phep_dac_biet.md` result was also retrieved.
-- **Error Tree:** Answer incomplete → relevant source exists in candidates → fallback reranker scores word overlap and elevates unrelated “ngày” matches → load the cross-encoder and rerun.
-- **Root cause:** The local fallback reranker is a token-overlap heuristic, not a semantic cross-encoder.
-- **Suggested fix:** Install/load `BAAI/bge-reranker-v2-m3`; add a regression check that ranks the special-leave policy first.
+- **Question:** Một nhân viên Senior có 9 năm thâm niên được nghỉ bao nhiêu ngày phép năm và lương trong khoảng nào?
+- **Expected:** 18 annual-leave days under v2024, plus a Senior salary range of 20–35 million VND/month.
+- **Observed:** The first context is the correct 2024 annual-leave policy and contains the 18-day calculation. The top three contexts do not include the salary policy.
+- **Error Tree:** Partial answer → annual-leave context is correct → salary evidence is missing → retrieve leave and salary subquestions separately and merge evidence.
+- **Root cause:** One query ranks by overall lexical overlap; it does not guarantee coverage of both hops.
+- **Suggested fix:** Decompose the query into leave entitlement and Senior salary retrieval, then answer only when both contexts are present.
 
-### 2. Current annual-leave entitlement
+### 2. Unpaid leave approval
+
+- **Question:** Nghỉ phép không lương 20 ngày cần ai phê duyệt?
+- **Expected:** CEO approval for 16–30 days.
+- **Observed:** The first context is the annual-leave policy; the second context is the correct unpaid-leave policy with the 16–30 day approval rule.
+- **Error Tree:** First answer context is off-topic → correct policy is in the candidate set → lexical ranking overweights shared “nghỉ phép” terms → rerank with the actual cross-encoder.
+- **Root cause:** The cross-encoder model was not cached, so the fallback preserves retrieval scores and cannot reliably disambiguate policy scope.
+- **Suggested fix:** Load `BAAI/bge-reranker-v2-m3` and verify the unpaid-leave source ranks first.
+
+### 3. Laptop purchase (multi-hop)
+
+- **Question:** Nếu cần mua một chiếc laptop 30 triệu cho nhân viên mới, ai phê duyệt và cần gì từ phòng CNTT?
+- **Expected:** Director approval, an IT configuration confirmation, and at least three quotes.
+- **Observed:** The first context is the correct purchase policy and contains all three requirements. The other returned contexts are unrelated, which may lower context precision.
+- **Error Tree:** Required evidence present → first context answers the question → extra contexts add noise → use the cross-encoder to remove unrelated parents.
+- **Root cause:** The local fallback cannot judge semantic relevance as well as the intended cross-encoder.
+- **Suggested fix:** Rerank candidates with the model and keep the smallest context set that covers approval, IT confirmation, and quotes.
+
+### 4. Annual-leave policy versions
 
 - **Question:** Nhân viên được nghỉ bao nhiêu ngày phép năm?
 - **Expected:** 15 days under v2024; v2023's 12 days is superseded.
-- **Observed:** The top BM25 source was `nghi_phep_dac_biet.md`, which does not answer annual entitlement.
-- **Error Tree:** Wrong policy retrieved → query is broad and overlaps other leave policies → no category/version filter → retrieve from annual-leave policy and prefer current versions.
-- **Root cause:** BM25 scores shared terms such as “nghỉ phép” without understanding policy scope or version status.
-- **Suggested fix:** Add category and effective-version metadata filters before reranking.
+- **Observed:** The first context is v2024 with 15 days; v2023 also appears among the top three contexts.
+- **Error Tree:** Current answer evidence ranks first → older policy remains nearby → answer may mix versions → use source status and version-aware reranking.
+- **Root cause:** Version boosting prefers the newest source but does not remove older versions from the candidate list.
+- **Suggested fix:** Keep the current policy first and include the old version only when the question requests historical comparison.
 
-### 3. Seniority leave calculation
-
-- **Question:** Thâm niên bao nhiêu năm thì được cộng thêm ngày phép?
-- **Expected:** v2024 adds one day per three years; v2023 required five years.
-- **Observed:** The first result came from `nghi_phep_nam_v2023.md`.
-- **Error Tree:** Version-sensitive answer may be stale → old and current policy both match → retrieval does not filter superseded documents → prefer v2024 and include the version in the answer context.
-- **Root cause:** Old and current policies are indexed with no active/superseded filter.
-- **Suggested fix:** Extract document version/status and filter to the latest effective policy for current-policy questions.
-
-### 4. Password change interval
+### 5. Password policy versions
 
 - **Question:** Bao lâu phải đổi mật khẩu một lần?
 - **Expected:** Every 120 days under v2.0; v1.0's 90 days is superseded.
-- **Observed:** `mat_khau_v1.md` ranked first and `mat_khau_v2.md` second.
-- **Error Tree:** Likely stale answer → both policy chunks are retrieved → lexical ranking favors repeated wording in v1 → apply active-version metadata filter before final ranking.
-- **Root cause:** The retrieval stage does not distinguish a superseded policy from the active one.
-- **Suggested fix:** Use version metadata and rerank with the complete question plus version constraints.
-
-### 5. Laptop purchase approval (multi-hop)
-
-- **Question:** Nếu cần mua một chiếc laptop 30 triệu cho nhân viên mới, ai phê duyệt và cần gì từ phòng CNTT?
-- **Expected:** Director approval, IT configuration confirmation, and at least three quotes.
-- **Observed:** The first result came from `hoan_chi_dao_tao.md`; purchase-specific evidence was not ranked first.
-- **Error Tree:** Multi-part answer at risk → top result is from the wrong topic → one BM25 query handles approval, IT configuration, and quotes together → retrieve purchase and IT policy evidence separately, then combine it.
-- **Root cause:** A single lexical ranking can miss one or more hops in a compound question.
-- **Suggested fix:** Split the question into approval, IT confirmation, and quote requirements; retrieve each subquestion and merge evidence before answering.
+- **Observed:** BM25 ranks `mat_khau_v2.md` first after version boosting, but both versions can remain in candidates.
+- **Error Tree:** Current source ranks first → stale policy can still enter the context set → answer risks mixing intervals → retrieve active version first and inspect the final context set.
+- **Root cause:** Filename version ranking is a heuristic and does not encode active/superseded status as a filter.
+- **Suggested fix:** Extract policy status metadata and add a current-version filter; retain v1 only for historical questions.
 
 ## Case study
 
-**Question:** Bao lâu phải đổi mật khẩu một lần?
+**Question:** Một nhân viên Senior có 9 năm thâm niên được nghỉ bao nhiêu ngày phép năm và lương trong khoảng nào?
 
-1. **Output đúng?** Cannot score with RAGAS here; the first context points to the obsolete 90-day policy.
-2. **Context đúng?** Both v1 and v2 were among the retrieved contexts, so relevant evidence exists but is not ordered safely.
-3. **Query rewrite OK?** The query contains no explicit “current policy” constraint, and the index has no active-version metadata filter.
-4. **Fix:** Filter to active v2.0 policy, then use the cross-encoder to rank its 120-day chunk first.
+1. **Output đúng?** The local fallback answer is not a generated answer; RAGAS cannot score this run.
+2. **Context đúng?** The annual-leave context is correct and gives 18 days, but the salary range is absent from the top three.
+3. **Query rewrite OK?** A single compound query did not retrieve both policy sources reliably.
+4. **Fix:** Retrieve the annual-leave and salary subquestions separately, check that both sources are present, then synthesize one answer.
 
-If another hour were available, install the declared embedding, reranking, and evaluation dependencies, configure the API key, rerun baseline and production RAGAS, and replace this qualitative review with the measured bottom-five.
+After configuring `GEMINI_API_KEY` and pre-downloading the embedding/reranker models, rerun baseline and production RAGAS and replace this qualitative review with the measured bottom-five.
