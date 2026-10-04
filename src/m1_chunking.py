@@ -83,6 +83,22 @@ def chunk_basic(text: str, chunk_size: int = 500, metadata: dict | None = None) 
     return chunks
 
 
+def _split_at_words(text: str, size: int) -> list[str]:
+    """Split long text at whitespace so chunks never begin or end mid-word."""
+    size = max(1, size)
+    parts = []
+    text = text.strip()
+    while len(text) > size:
+        end = text.rfind(" ", 0, size + 1)
+        if end <= 0:
+            end = size
+        parts.append(text[:end].strip())
+        text = text[end:].strip()
+    if text:
+        parts.append(text)
+    return parts
+
+
 # ─── Strategy 1: Semantic Chunking ───────────────────────
 
 
@@ -137,16 +153,14 @@ def chunk_hierarchical(text: str, parent_size: int = HIERARCHICAL_PARENT_SIZE,
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
     parent_texts, current = [], ""
     for paragraph in paragraphs:
-        while len(paragraph) > parent_size:
-            if current:
+        for piece in _split_at_words(paragraph, parent_size):
+            if current and len(current) + len(piece) + 2 > parent_size:
                 parent_texts.append(current)
                 current = ""
-            parent_texts.append(paragraph[:parent_size])
-            paragraph = paragraph[parent_size:]
-        if current and len(current) + len(paragraph) + 2 > parent_size:
-            parent_texts.append(current)
-            current = ""
-        current = f"{current}\n\n{paragraph}".strip()
+            if len(piece) >= parent_size:
+                parent_texts.append(piece)
+                continue
+            current = f"{current}\n\n{piece}".strip()
     if current:
         parent_texts.append(current)
 
@@ -154,10 +168,8 @@ def chunk_hierarchical(text: str, parent_size: int = HIERARCHICAL_PARENT_SIZE,
     for i, parent_text in enumerate(parent_texts):
         pid = f"parent_{i}"
         parents.append(Chunk(parent_text, {**metadata, "chunk_type": "parent", "parent_id": pid}))
-        for start in range(0, len(parent_text), max(1, child_size)):
-            child_text = parent_text[start:start + max(1, child_size)].strip()
-            if child_text:
-                children.append(Chunk(child_text, {**metadata, "chunk_type": "child"}, parent_id=pid))
+        for child_text in _split_at_words(parent_text, child_size):
+            children.append(Chunk(child_text, {**metadata, "chunk_type": "child"}, parent_id=pid))
     return parents, children
 
 

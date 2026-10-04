@@ -110,10 +110,17 @@ def evaluate_pipeline(search: HybridSearch, reranker: CrossEncoderReranker):
     print("PRODUCTION RAG SCORES")
     print("=" * 60)
     for m in ["faithfulness", "answer_relevancy", "context_precision", "context_recall"]:
-        s = results.get(m, 0)
-        print(f"  {'✓' if s >= 0.75 else '✗'} {m}: {s:.4f}")
+        if results.get("evaluation_error"):
+            print(f"  — {m}: unavailable")
+        else:
+            s = results.get(m, 0)
+            print(f"  {'✓' if s >= 0.75 else '✗'} {m}: {s:.4f}")
 
-    failures = failure_analysis(results.get("per_question", []))
+    if results.get("evaluation_error"):
+        failures = []
+        print("  ⚠️  Metrics unavailable; see evaluation_error in the report.", flush=True)
+    else:
+        failures = failure_analysis(results.get("per_question", []))
     save_report(results, failures)
     return results
 

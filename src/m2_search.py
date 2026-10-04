@@ -58,12 +58,16 @@ class BM25Search:
 
 class DenseSearch:
     def __init__(self):
-        from qdrant_client import QdrantClient
         try:
+            from qdrant_client import QdrantClient
             self.client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT, timeout=2)
             self.client.get_collections()
         except Exception:
-            self.client = QdrantClient(":memory:")
+            try:
+                from qdrant_client import QdrantClient
+                self.client = QdrantClient(":memory:")
+            except ImportError:
+                self.client = None
         self._encoder = None
 
     def _get_encoder(self):
@@ -74,21 +78,26 @@ class DenseSearch:
 
     def index(self, chunks: list[dict], collection: str = COLLECTION_NAME) -> None:
         """Index chunks into Qdrant."""
-        from qdrant_client.models import Distance, PointStruct, VectorParams
-        if not chunks:
+        if self.client is None or not chunks:
             return
-        self.client.recreate_collection(
-            collection_name=collection,
-            vectors_config=VectorParams(size=EMBEDDING_DIM, distance=Distance.COSINE),
-        )
-        vectors = self._get_encoder().encode([c["text"] for c in chunks], show_progress_bar=True)
-        points = [PointStruct(id=i, vector=vector.tolist(),
-                              payload={**chunk.get("metadata", {}), "text": chunk["text"]})
-                  for i, (chunk, vector) in enumerate(zip(chunks, vectors))]
-        self.client.upsert(collection_name=collection, points=points)
+        from qdrant_client.models import Distance, PointStruct, VectorParams
+        try:
+            self.client.recreate_collection(
+                collection_name=collection,
+                vectors_config=VectorParams(size=EMBEDDING_DIM, distance=Distance.COSINE),
+            )
+            vectors = self._get_encoder().encode([c["text"] for c in chunks], show_progress_bar=True)
+            points = [PointStruct(id=i, vector=vector.tolist(),
+                                  payload={**chunk.get("metadata", {}), "text": chunk["text"]})
+                      for i, (chunk, vector) in enumerate(zip(chunks, vectors))]
+            self.client.upsert(collection_name=collection, points=points)
+        except Exception as exc:
+            print(f"  ⚠️  Dense indexing unavailable: {exc}")
 
     def search(self, query: str, top_k: int = DENSE_TOP_K, collection: str = COLLECTION_NAME) -> list[SearchResult]:
         """Search using dense vectors."""
+        if self.client is None:
+            return []
         try:
             query_vector = self._get_encoder().encode(query).tolist()
             response = self.client.query_points(collection_name=collection,

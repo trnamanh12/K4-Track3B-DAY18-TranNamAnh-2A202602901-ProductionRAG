@@ -53,12 +53,12 @@ def evaluate_ragas(questions: list[str], answers: list[str],
             **{name: float(row.get(name, 0.0) or 0.0) for name in metric_names},
         ) for row in rows]
         aggregate = {name: float(result[name]) for name in metric_names}
-        return {**aggregate, "per_question": per_question}
+        return {**aggregate, "evaluation_status": "completed", "per_question": per_question}
     except Exception as exc:
         print(f"  ⚠️  RAGAS evaluation failed: {exc}")
         per_question = [EvalResult(q, a, c, gt, 0.0, 0.0, 0.0, 0.0)
                         for q, a, c, gt in zip(questions, answers, contexts, ground_truths)]
-        return {**{name: 0.0 for name in metric_names},
+        return {**{name: 0.0 for name in metric_names}, "evaluation_status": "unavailable",
                 "per_question": per_question, "evaluation_error": str(exc)}
 
 
