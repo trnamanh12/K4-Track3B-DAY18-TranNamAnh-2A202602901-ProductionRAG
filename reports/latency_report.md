@@ -1,16 +1,16 @@
 # Pipeline Latency Breakdown
 
-Total: **0.60s** across 20 questions.
+Total: **855.68s** across 20 questions.
 
-Modes: dense=off, reranker=lexical_fallback, generation=local_fallback, RAGAS=unavailable.
+Modes: dense=on, reranker=cross_encoder, generation=gemini, RAGAS=completed.
 
 | Stage | Duration (s) |
 |---|---:|
-| Chunking | 0.03 |
+| Chunking | 0.10 |
 | Enrichment | 0.00 |
-| Indexing | 0.52 |
-| Retrieval Total | 0.02 |
-| Reranking Total | 0.03 |
-| Answer Generation Total | 0.00 |
-| Reragas Evaluation | 0.00 |
-| Average query | 0.00 |
+| Indexing | 84.25 |
+| Retrieval Total | 3.00 |
+| Reranking Total | 112.59 |
+| Answer Generation Total | 70.52 |
+| Reragas Evaluation | 585.22 |
+| Average query | 9.31 |

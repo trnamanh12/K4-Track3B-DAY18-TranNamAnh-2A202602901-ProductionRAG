@@ -49,19 +49,24 @@ def evaluate_ragas(questions: list[str], answers: list[str],
         from datasets import Dataset
         from ragas import evaluate
         from ragas.metrics import faithfulness, answer_relevancy, context_precision, context_recall
-        from langchain_google_genai import GoogleGenerativeAIEmbeddings
+        from ragas.run_config import RunConfig
+        from ragas.llms import LangchainLLMWrapper
+        from langchain_community.embeddings import HuggingFaceEmbeddings
         from src.llm import gemini_chat_model
+
+        answer_relevancy.strictness = 1
 
         dataset = Dataset.from_dict({
             "question": questions, "answer": answers,
             "contexts": contexts, "ground_truth": ground_truths,
         })
-        result = evaluate(dataset, metrics=[faithfulness, answer_relevancy,
-                                            context_precision, context_recall],
-                          llm=gemini_chat_model(temperature=0),
-                          embeddings=GoogleGenerativeAIEmbeddings(
-                              model=GEMINI_EMBEDDING_MODEL, google_api_key=GEMINI_API_KEY),
-                          max_workers=2)
+        result = evaluate(
+            dataset,
+            metrics=[faithfulness, answer_relevancy, context_precision, context_recall],
+            llm=LangchainLLMWrapper(gemini_chat_model(temperature=0)),
+            embeddings=HuggingFaceEmbeddings(model_name="BAAI/bge-m3", model_kwargs={"device": "cpu"}),
+            run_config=RunConfig(max_workers=1, max_retries=10, timeout=120),
+        )
         rows = result.to_pandas().to_dict(orient="records")
         per_question = [EvalResult(
             question=row["question"], answer=row["answer"], contexts=row["contexts"],
@@ -110,18 +115,27 @@ def failure_analysis(eval_results: list[EvalResult], bottom_n: int = 10) -> list
     return failures
 
 
+def _json_default(obj):
+    if hasattr(obj, "tolist"):
+        return obj.tolist()
+    if hasattr(obj, "item"):
+        return obj.item()
+    raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
+
+
 def save_report(results: dict, failures: list[dict], path: str = "reports/ragas_report.json"):
     """Save evaluation report to JSON. (Đã implement sẵn)"""
     parent_dir = os.path.dirname(path)
     if parent_dir:
         os.makedirs(parent_dir, exist_ok=True)
     report = {
-        "aggregate": {k: v for k, v in results.items() if k != "per_question"},
+        "aggregate": {k: float(v) if isinstance(v, (int, float)) else v
+                      for k, v in results.items() if k != "per_question"},
         "num_questions": len(results.get("per_question", [])),
         "failures": failures,
     }
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(report, f, ensure_ascii=False, indent=2)
+        json.dump(report, f, ensure_ascii=False, indent=2, default=_json_default)
     print(f"Report saved to {path}")
 
 

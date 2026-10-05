@@ -29,8 +29,12 @@ def main():
     # Step 1: Basic Baseline
     print("\n📌 STEP 1: Running Basic RAG Baseline...")
     print("-" * 40)
-    from naive_baseline import main as run_baseline
-    run_baseline()
+    naive_path = "reports/naive_baseline_report.json"
+    if not (os.path.exists(naive_path) and os.path.getsize(naive_path) > 100):
+        from naive_baseline import main as run_baseline
+        run_baseline()
+    else:
+        print("  ✓ Đã có báo cáo baseline hợp lệ tại reports/naive_baseline_report.json")
 
     # Step 2: Production Pipeline
     print("\n📌 STEP 2: Running Production Pipeline...")

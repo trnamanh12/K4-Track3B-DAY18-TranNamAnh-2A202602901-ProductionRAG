@@ -89,7 +89,7 @@ class DenseSearch:
     def _get_encoder(self):
         if self._encoder is None:
             from sentence_transformers import SentenceTransformer
-            self._encoder = SentenceTransformer(EMBEDDING_MODEL)
+            self._encoder = SentenceTransformer(EMBEDDING_MODEL, device="cpu")
         return self._encoder
 
     def index(self, chunks: list[dict], collection: str = COLLECTION_NAME) -> None:

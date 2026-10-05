@@ -36,7 +36,7 @@ class CrossEncoderReranker:
             if self.model_name not in _MODEL_CACHE:
                 try:
                     from sentence_transformers import CrossEncoder
-                    _MODEL_CACHE[self.model_name] = CrossEncoder(self.model_name)
+                    _MODEL_CACHE[self.model_name] = CrossEncoder(self.model_name, device="cpu")
                 except Exception as exc:
                     print(f"  ⚠️  Cross-encoder unavailable: {exc}")
                     _MODEL_CACHE[self.model_name] = False

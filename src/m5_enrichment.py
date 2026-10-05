@@ -144,11 +144,40 @@ def extract_metadata(text: str) -> dict:
 # ─── Combined Single-Call Mode ───────────────────────────
 
 
+_CACHE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "reports", "enrichment_cache.json")
+_ENRICHMENT_CACHE: dict[str, dict] = {}
+
+
+def _load_enrichment_cache():
+    global _ENRICHMENT_CACHE
+    if not _ENRICHMENT_CACHE and os.path.exists(_CACHE_PATH):
+        try:
+            with open(_CACHE_PATH, "r", encoding="utf-8") as f:
+                _ENRICHMENT_CACHE = json.load(f)
+        except Exception:
+            pass
+
+
+def _save_enrichment_cache():
+    try:
+        os.makedirs(os.path.dirname(_CACHE_PATH), exist_ok=True)
+        with open(_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(_ENRICHMENT_CACHE, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
 def _enrich_single_call(text: str, source: str) -> dict:
     """Single LLM call to get summary + questions + context + metadata.
 
     ⚠️ Cost optimization: 1 API call thay vì 4 calls riêng lẻ.
     """
+    _load_enrichment_cache()
+    cache_key = f"{source}:::{text}"
+    if cache_key in _ENRICHMENT_CACHE:
+        return _ENRICHMENT_CACHE[cache_key]
+
+    result = None
     if GEMINI_API_KEY:
         try:
             response = gemini_chat_model().invoke([
@@ -157,10 +186,15 @@ def _enrich_single_call(text: str, source: str) -> dict:
             ])
             content = _response_text(response).strip()
             content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content)
-            return json.loads(content)
+            result = json.loads(content)
         except Exception as exc:
             print(f"  ⚠️  Enrichment API failed: {exc}")
-    return _fallback_enrichment(text, source)
+    if not result:
+        result = _fallback_enrichment(text, source)
+
+    _ENRICHMENT_CACHE[cache_key] = result
+    _save_enrichment_cache()
+    return result
 
 
 # ─── Full Enrichment Pipeline ────────────────────────────
